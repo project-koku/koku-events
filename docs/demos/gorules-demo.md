@@ -3,6 +3,8 @@
 > Recorded demo — instance-type pricing and committed-use discounts
 > using a JSON decision engine. No code changes for pricing updates.
 
+> **Historical artifact:** This recording captured the original file-backed workflow. It no longer runs verbatim because `RULES_DIR` was removed. The current service starts with `./inventory-watcher`, seeds missing bundled rules into the `pricing_rules` database table, and hot-reloads edits made to that table without a restart. See [Rate Configuration Guide](../rate-configuration-guide.md) for the current workflow.
+
 ## Prerequisites
 
 ```bash
@@ -45,8 +47,7 @@ standard-4-16 + standard → $0.20/hr, 0% off  = $0.20 effective
 standard-8-32 + gold     → $0.40/hr, 20% off = $0.32 effective
 ```
 
-Key point: "This is a JSON file. Not Go code. An operator edits it,
-restarts, and pricing changes. No PR. No recompile."
+Key point: "This is a JSON file. Not Go code. An operator edits it, restarts, and pricing changes. No PR. No recompile."
 
 Then show `rules/committed-use-pricing.json` — the 3-node graph:
 

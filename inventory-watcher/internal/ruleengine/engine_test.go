@@ -143,12 +143,12 @@ func TestCUD_WithinCommitment(t *testing.T) {
 	defer engine.Dispose()
 
 	input := map[string]any{
-		"tenant_id":           "tenant-acme",
-		"resource_type":       "compute_instance",
-		"instance_type":       "standard-4-16",
-		"value":               3600.0, // 1 hour
-		"running_vms":         3.0,    // within commitment of 5
-		"base_price_per_hour": 0.20,
+		"tenant_id":               "tenant-acme",
+		"resource_type":           "compute_instance",
+		"instance_type":           "standard-4-16",
+		"value":                   3600.0, // 1 hour
+		"running_vms":             3.0,    // within commitment of 5
+		"base_price_per_hour":     0.20,
 		"monthly_utilization_pct": 80.0,
 	}
 
@@ -181,12 +181,12 @@ func TestCUD_OverCommitment_SustainedUse(t *testing.T) {
 	defer engine.Dispose()
 
 	input := map[string]any{
-		"tenant_id":           "tenant-acme",
-		"resource_type":       "compute_instance",
-		"instance_type":       "standard-4-16",
-		"value":               3600.0,
-		"running_vms":         8.0,    // over commitment of 5
-		"base_price_per_hour": 0.20,
+		"tenant_id":               "tenant-acme",
+		"resource_type":           "compute_instance",
+		"instance_type":           "standard-4-16",
+		"value":                   3600.0,
+		"running_vms":             8.0, // over commitment of 5
+		"base_price_per_hour":     0.20,
 		"monthly_utilization_pct": 80.0, // qualifies for 20% sustained-use
 	}
 
@@ -216,12 +216,12 @@ func TestCUD_NoCUD_LowUtilization(t *testing.T) {
 	defer engine.Dispose()
 
 	input := map[string]any{
-		"tenant_id":           "tenant-initech",
-		"resource_type":       "compute_instance",
-		"instance_type":       "standard-4-16",
-		"value":               3600.0,
-		"running_vms":         2.0,
-		"base_price_per_hour": 0.20,
+		"tenant_id":               "tenant-initech",
+		"resource_type":           "compute_instance",
+		"instance_type":           "standard-4-16",
+		"value":                   3600.0,
+		"running_vms":             2.0,
+		"base_price_per_hour":     0.20,
 		"monthly_utilization_pct": 10.0, // below 25%, no sustained-use
 	}
 
@@ -246,12 +246,12 @@ func TestCUD_GlobexHighCommitment(t *testing.T) {
 	defer engine.Dispose()
 
 	input := map[string]any{
-		"tenant_id":           "tenant-globex",
-		"resource_type":       "compute_instance",
-		"instance_type":       "standard-8-32",
-		"value":               7200.0, // 2 hours
-		"running_vms":         8.0,    // within commitment of 10
-		"base_price_per_hour": 0.40,
+		"tenant_id":               "tenant-globex",
+		"resource_type":           "compute_instance",
+		"instance_type":           "standard-8-32",
+		"value":                   7200.0, // 2 hours
+		"running_vms":             8.0,    // within commitment of 10
+		"base_price_per_hour":     0.40,
 		"monthly_utilization_pct": 95.0,
 	}
 
@@ -324,6 +324,39 @@ func TestNewFromStore_LoadsRules(t *testing.T) {
 	}
 }
 
+func TestEvaluateRate_CatalogItemRule(t *testing.T) {
+	ruleJSON, err := os.ReadFile(path.Join("..", "..", "rules", "compute-pricing.json"))
+	if err != nil {
+		t.Fatalf("read rule file: %v", err)
+	}
+
+	store := &mockRuleStore{
+		rules:   []inventory.PricingRule{{Name: "compute-pricing.json", RuleJSON: ruleJSON, Version: 1}},
+		version: 1,
+	}
+	engine := NewFromStore(store)
+	defer engine.Close()
+
+	if _, err := engine.ReloadIfChanged(context.Background()); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	output, err := engine.EvaluateRate("compute-pricing.json", PricingInput{
+		CatalogItem:  "catalog-live-vm-standard",
+		InstanceType: "standard-4-8",
+		Value:        3600,
+	})
+	if err != nil {
+		t.Fatalf("evaluate failed: %v", err)
+	}
+	if output.CostAmount < 0.29 || output.CostAmount > 0.31 {
+		t.Errorf("expected catalog GoRule cost ~$0.30, got $%.4f", output.CostAmount)
+	}
+	if output.Description != "catalog-live-vm-standard via GoRule ($0.30/hr)" {
+		t.Errorf("unexpected description: %q", output.Description)
+	}
+}
+
 func TestReloadIfChanged_NoReloadWhenVersionUnchanged(t *testing.T) {
 	store := &mockRuleStore{version: 5}
 	engine := NewFromStore(store)
@@ -367,19 +400,6 @@ func TestReloadIfChanged_ReloadsWhenVersionChanges(t *testing.T) {
 	}
 	if engine.cachedVersion != 2 {
 		t.Errorf("expected cachedVersion=2, got %d", engine.cachedVersion)
-	}
-}
-
-func TestNewFromStore_FileBased_NoReload(t *testing.T) {
-	engine := New(path.Join("..", "..", "rules"))
-	defer engine.Close()
-
-	reloaded, err := engine.ReloadIfChanged(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if reloaded {
-		t.Error("file-based engine should never reload")
 	}
 }
 

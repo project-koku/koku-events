@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path"
 	"sync"
 
 	zen "github.com/gorules/zen-go"
@@ -20,20 +18,10 @@ type RuleStore interface {
 
 type Engine struct {
 	engine        zen.Engine
-	rulesDir      string
 	store         RuleStore
 	mu            sync.RWMutex
 	cache         map[string][]byte
 	cachedVersion int64
-}
-
-func New(rulesDir string) *Engine {
-	e := &Engine{rulesDir: rulesDir}
-	loader := func(key string) ([]byte, error) {
-		return os.ReadFile(path.Join(rulesDir, key))
-	}
-	e.engine = zen.NewEngine(zen.EngineConfig{Loader: loader})
-	return e
 }
 
 func NewFromStore(store RuleStore) *Engine {
@@ -87,9 +75,6 @@ func (e *Engine) ReloadIfChanged(ctx context.Context) (bool, error) {
 }
 
 func (e *Engine) HasRules() bool {
-	if e.rulesDir != "" {
-		return true
-	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return len(e.cache) > 0
@@ -111,6 +96,7 @@ func (e *Engine) Close() {
 
 type PricingInput struct {
 	InstanceType string  `json:"instance_type"`
+	CatalogItem  string  `json:"catalog_item"`
 	TenantTier   string  `json:"tenant_tier"`
 	TenantID     string  `json:"tenant_id"`
 	ResourceType string  `json:"resource_type"`
@@ -130,6 +116,7 @@ type PricingOutput struct {
 func (e *Engine) EvaluateRate(ruleFile string, input PricingInput) (*PricingOutput, error) {
 	inputMap := map[string]any{
 		"instance_type": input.InstanceType,
+		"catalog_item":  input.CatalogItem,
 		"tenant_tier":   input.TenantTier,
 		"tenant_id":     input.TenantID,
 		"resource_type": input.ResourceType,

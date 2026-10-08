@@ -64,7 +64,7 @@ The PoC supports four distinct rate forms across its two rating tiers:
 | **Per-Tenant Rate** | Static (`rates`) | `rates.tenant_id` | Negotiated contracts and tenant-specific discounts | Tenant `tenant-acme` pays `$0.15/hr` instead of `$0.20/hr` |
 | **Tiered (`per_event`)** | Static (`rates`) | `rates.tiers` (JSONB) | Independent graduated pricing per transaction/request | Large MaaS inference requests where tier resets each call |
 | **Tiered (`cumulative`)** | Static (`rates`) | `rates.tiers` + `rates.tier_period` | Monthly or windowed volume/capacity tiers with free allowance | First 20 GiB memory free/month, then `$0.08/GiB`, then `$0.07/GiB` |
-| **Programmable (GoRules)** | Rule Engine (Zen) | `pricing_rules` table / `rules/*.json` | Multi-factor logic, commitment agreements, and tenant tier labels | `standard-4-16` + `gold` tier label → 20% discount; CUD overage → sustained use |
+| **Programmable (GoRules)** | Rule Engine (Zen) | `pricing_rules` table | Multi-factor logic, commitment agreements, and tenant tier labels | `standard-4-16` + `gold` tier label → 20% discount; CUD overage → sustained use |
 
 ---
 
@@ -84,22 +84,23 @@ The PoC embeds **GoRules/Zen** (`github.com/gorules/zen-go`), a compiled Rust de
 The consumer includes two battle-tested JSON Decision Models (JDMs) in `inventory-watcher/rules/`:
 
 #### 1. Instance Type with Tenant Tier (`compute-pricing.json`)
-Evaluates a 2D decision table mapping `(instance_type, tenant_tier)` to base price and discount:
+Evaluates a decision table mapping `(catalog_item, instance_type, tenant_tier)` to base price and discount. Catalog-specific rows are evaluated first; blank catalog cells preserve the existing instance-type behavior:
 
 ```
 ┌──────────────────┐     ┌────────────────────────────────┐     ┌────────────────┐
 │      Input       │────▶│    Instance Type Rate Matrix   │────▶│  Final Cost    │
-│  instance_type   │     │                                │     │  (Expression)  │
-│  tenant_tier     │     │ standard-4-16 + gold → 20% off │     │                │
+│  catalog_item    │     │ catalog SKU → dedicated price  │     │  (Expression)  │
+│  instance_type   │     │ standard-4-16 + gold → 20% off │     │                │
+│  tenant_tier     │     │ standard-4-16 + any  →  0% off │     │                │
 │  value (seconds) │     │ standard-4-16 + any  →  0% off │     │ value/3600     │
 └──────────────────┘     └────────────────────────────────┘     │   × $/hr       │
                                                                 │   × (1 - disc) │
                                                                 └────────────────┘
 ```
 
-* **Inputs:** `instance_type`, `tenant_tier` (from tenant OSAC labels), `value` (uptime seconds).
+* **Inputs:** `catalog_item`, `instance_type`, `tenant_tier` (from tenant OSAC labels), and `value` (uptime seconds).
 * **Outputs:** `cost_amount`, `effective_rate`, `currency`, `description`.
-* **Example:** `standard-4-16` has a base rate of $0.20/hr. If the tenant has `tier=gold`, it is billed at $0.16/hr.
+* **Examples:** `catalog-live-vm-standard` is priced at $0.30/hr by a catalog-specific GoRule row. `standard-4-16` has a base rate of $0.20/hr and is billed at $0.16/hr for a tenant with `tier=gold`.
 
 #### 2. Committed-Use & Sustained-Use Disounts (`committed-use-pricing.json`)
 A multi-node decision graph chaining three evaluation stages:
@@ -111,9 +112,9 @@ See [GoRules Decision Logic & Diagrams](research/gorules-rule-diagrams.md) for f
 
 ### Storage & Hot-Reloading
 
-GoRules rules can be supplied in two ways:
-1. **File-based:** Point `RULES_DIR=rules` to a directory of `.json` JDM files.
-2. **Database-backed (`pricing_rules` table):**
+GoRules uses the database-backed `pricing_rules` table. The bundled JDM files seed missing rows when a new database is initialized; existing rows are never overwritten on restart, so database edits remain authoritative:
+
+1. **Database-backed (`pricing_rules` table):**
    ```sql
    CREATE TABLE pricing_rules (
        id         BIGSERIAL PRIMARY KEY,
